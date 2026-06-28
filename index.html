@@ -539,8 +539,8 @@
   }
 
   /* ── TEAM STATUS COLORS ── */
-  .team-alive { color: #5dca90; }
-  .team-eliminated { color: #445544; }
+  .team-alive { color: #8bca8b; }
+  .team-eliminated { color: #8faa98; }
 
   /* ── ADMIN KNOCKOUT IMPROVED ── */
   .ko-admin-match {
@@ -1190,13 +1190,16 @@ const showPicks = canViewPicks();
         const elim = isTeamEliminated(id);
         let nameStr;
         if (alive) {
-          nameStr = `<strong style="color:#5dca90">${t.name}</strong>`;
+          nameStr = `<strong style="color:#8bca8b">${t.name}</strong>`;
+          return `${nameStr} <span style="color:#8bca8b">(${pts})</span>`;
         } else if (elim) {
-          nameStr = `<span style="color:#445544">${t.name}</span>`;
+          nameStr = `<s><span style="color:#8faa98">${t.name}</span></s>`;
+          return `${nameStr} <span style="color:#8faa98">(${pts})</span>`;
         } else {
           nameStr = `<span style="color:var(--muted)">${t.name}</span>`;
+          return `${nameStr} <span style="color:var(--muted)">(${pts})</span>`;
         }
-        return `${nameStr} <span style="color:#445544">(${pts})</span>`;
+        //return `${nameStr} <span style="color:#445544">(${pts})</span>`;
       }).filter(Boolean);
       teamDisplay = teamParts.join(' · ');
     } else {
