@@ -817,15 +817,13 @@ function computeScores(data) {
       if (info.groupWinner) score += 1;
     });
 
-    // Knockout round points — works with both old and new match ID formats
-    const KO_PTS = { r32: 4, r16: 6, qf: 10, sf: 16, final: 24, third: 0 };
-    Object.entries(data.knockoutMatches).forEach(([mid, m]) => {
+    // Knockout round points
+    const KO_PTS = { r32: 4, r16: 6, qf: 10, sf: 16, final: 24 };
+    Object.values(data.knockoutMatches).forEach(m => {
       if (!m.played) return;
       const hs = parseInt(m.homeScore) || 0;
       const as = parseInt(m.awayScore) || 0;
-      // Determine round from stored round field or parse from ID
-      const roundKey = m.round || mid.split('_')[0];
-      const pts = KO_PTS[roundKey] || 0;
+      const pts = KO_PTS[m.round] || 0;
       if (picks.has(m.home) && hs > as) score += pts;
       if (picks.has(m.away) && as > hs) score += pts;
     });
@@ -1347,630 +1345,83 @@ function matches(el) {
 }
 
 // ── KNOCKOUT BRACKET PAGE ──
-// Bracket structure: fixed matchup IDs that define the seeding/bracket position
-// Each match has: id, round, top team slot, bottom team slot
-// Winner of match feeds into a parent match
-const BRACKET_STRUCTURE = [
-  // ══ LEFT HALF ══
-  // Round of 32 — Left
-  { id:'r32_L1',  round:'r32',   slot:'top',    feeds:'r16_L1',  feedSlot:'top'    }, // GER vs PAR
-  { id:'r32_L2',  round:'r32',   slot:'bottom', feeds:'r16_L1',  feedSlot:'bottom' }, // FRA vs SWE
-  { id:'r32_L3',  round:'r32',   slot:'top',    feeds:'r16_L2',  feedSlot:'top'    }, // RSA vs CAN
-  { id:'r32_L4',  round:'r32',   slot:'bottom', feeds:'r16_L2',  feedSlot:'bottom' }, // NED vs MAR
-  { id:'r32_L5',  round:'r32',   slot:'top',    feeds:'r16_L3',  feedSlot:'top'    }, // POR vs CRO
-  { id:'r32_L6',  round:'r32',   slot:'bottom', feeds:'r16_L3',  feedSlot:'bottom' }, // ESP vs AUT
-  { id:'r32_L7',  round:'r32',   slot:'top',    feeds:'r16_L4',  feedSlot:'top'    }, // USA vs BIH
-  { id:'r32_L8',  round:'r32',   slot:'bottom', feeds:'r16_L4',  feedSlot:'bottom' }, // BEL vs SEN
-  // Round of 16 — Left
-  { id:'r16_L1',  round:'r16',   slot:'top',    feeds:'qf_L1',   feedSlot:'top'    },
-  { id:'r16_L2',  round:'r16',   slot:'bottom', feeds:'qf_L1',   feedSlot:'bottom' },
-  { id:'r16_L3',  round:'r16',   slot:'top',    feeds:'qf_L2',   feedSlot:'top'    },
-  { id:'r16_L4',  round:'r16',   slot:'bottom', feeds:'qf_L2',   feedSlot:'bottom' },
-  // QF — Left
-  { id:'qf_L1',   round:'qf',    slot:'top',    feeds:'sf_L',    feedSlot:'top'    },
-  { id:'qf_L2',   round:'qf',    slot:'bottom', feeds:'sf_L',    feedSlot:'bottom' },
-  // SF — Left
-  { id:'sf_L',    round:'sf',    slot:'top',    feeds:'final',   feedSlot:'top'    },
-  // ══ RIGHT HALF ══
-  // Round of 32 — Right
-  { id:'r32_R1',  round:'r32',   slot:'top',    feeds:'r16_R1',  feedSlot:'top'    }, // BRA vs JPN
-  { id:'r32_R2',  round:'r32',   slot:'bottom', feeds:'r16_R1',  feedSlot:'bottom' }, // CIV vs NOR
-  { id:'r32_R3',  round:'r32',   slot:'top',    feeds:'r16_R2',  feedSlot:'top'    }, // MEX vs ECU
-  { id:'r32_R4',  round:'r32',   slot:'bottom', feeds:'r16_R2',  feedSlot:'bottom' }, // ENG vs COD
-  { id:'r32_R5',  round:'r32',   slot:'top',    feeds:'r16_R3',  feedSlot:'top'    }, // ARG vs CPV
-  { id:'r32_R6',  round:'r32',   slot:'bottom', feeds:'r16_R3',  feedSlot:'bottom' }, // AUS vs EGY
-  { id:'r32_R7',  round:'r32',   slot:'top',    feeds:'r16_R4',  feedSlot:'top'    }, // SUI vs ALG
-  { id:'r32_R8',  round:'r32',   slot:'bottom', feeds:'r16_R4',  feedSlot:'bottom' }, // COL vs GHA
-  // Round of 16 — Right
-  { id:'r16_R1',  round:'r16',   slot:'top',    feeds:'qf_R1',   feedSlot:'top'    },
-  { id:'r16_R2',  round:'r16',   slot:'bottom', feeds:'qf_R1',   feedSlot:'bottom' },
-  { id:'r16_R3',  round:'r16',   slot:'top',    feeds:'qf_R2',   feedSlot:'top'    },
-  { id:'r16_R4',  round:'r16',   slot:'bottom', feeds:'qf_R2',   feedSlot:'bottom' },
-  // QF — Right
-  { id:'qf_R1',   round:'qf',    slot:'top',    feeds:'sf_R',    feedSlot:'top'    },
-  { id:'qf_R2',   round:'qf',    slot:'bottom', feeds:'sf_R',    feedSlot:'bottom' },
-  // SF — Right
-  { id:'sf_R',    round:'sf',    slot:'bottom', feeds:'final',   feedSlot:'bottom' },
-  // ══ FINAL ══
-  { id:'final',   round:'final', slot:'top',    feeds:null,      feedSlot:null     },
-  { id:'third',   round:'third', slot:'top',    feeds:null,      feedSlot:null     },
-];
-
-// Pre-filled bracket from the official 2026 World Cup bracket image
-const DEFAULT_BRACKET_TEAMS = {
-  // Left R32
-  r32_L1: { home:'GER', away:'PAR' },
-  r32_L2: { home:'FRA', away:'SWE' },
-  r32_L3: { home:'RSA', away:'CAN' },
-  r32_L4: { home:'NED', away:'MAR' },
-  r32_L5: { home:'POR', away:'CRO' },
-  r32_L6: { home:'ESP', away:'AUT' },
-  r32_L7: { home:'USA', away:'BIH' },
-  r32_L8: { home:'BEL', away:'SEN' },
-  // Right R32
-  r32_R1: { home:'BRA', away:'JPN' },
-  r32_R2: { home:'CIV', away:'NOR' },
-  r32_R3: { home:'MEX', away:'ECU' },
-  r32_R4: { home:'ENG', away:'CGO' },
-  r32_R5: { home:'ARG', away:'CPV' },
-  r32_R6: { home:'AUS', away:'EGY' },
-  r32_R7: { home:'SUI', away:'ALG' },
-  r32_R8: { home:'COL', away:'GHA' },
-};
-
-function getMatchData(data, matchId) {
-  // Check saved knockoutMatches first
-  if (data.knockoutMatches && data.knockoutMatches[matchId]) {
-    return data.knockoutMatches[matchId];
-  }
-  // Fall back to default bracket teams (R32 only)
-  const def = DEFAULT_BRACKET_TEAMS[matchId];
-  if (def) return { home: def.home, away: def.away, homeScore: '', awayScore: '', played: false };
-  return { home: '', away: '', homeScore: '', awayScore: '', played: false };
-}
-
 function knockout(el) {
   const data = getData();
-  el.innerHTML = '';
+  el.innerHTML = `<h2 class="page-title">Knockout Bracket</h2>`;
 
-  // ── Header ──
-  const header = document.createElement('div');
-  header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:12px 2px 8px;';
-  header.innerHTML = `
-    <h2 class="page-title" style="margin:0;">Bracket</h2>
-    <div style="display:flex; gap:6px;">
-      <button class="nav-btn ${window._bracketView!=='list'?'active':''}" onclick="setBracketView('bracket')" style="font-size:11px; padding:5px 10px;">⬜ Visual</button>
-      <button class="nav-btn ${window._bracketView==='list'?'active':''}" onclick="setBracketView('list')" style="font-size:11px; padding:5px 10px;">☰ List</button>
-    </div>`;
-  el.appendChild(header);
-
-  if (adminAuthed) {
-    const hint = document.createElement('div');
-    hint.className = 'alert info';
-    hint.style.marginBottom = '10px';
-    hint.innerHTML = '✏️ <strong>Admin:</strong> Tap any match to edit teams & scores.';
-    el.appendChild(hint);
-  }
-
-  if (window._bracketView === 'list') {
-    renderBracketList(el, data);
-  } else {
-    renderBracketVisual(el, data);
-  }
-
-  window.setBracketView = function(v) {
-    window._bracketView = v;
-    knockout(el);
-    // scroll to top
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-}
-
-function renderBracketList(el, data) {
   const rounds = [
-    { key:'r32',   label:'Round of 32' },
-    { key:'r16',   label:'Round of 16' },
-    { key:'qf',    label:'Quarter-Finals' },
-    { key:'sf',    label:'Semi-Finals' },
-    { key:'final', label:'Final' },
-    { key:'third', label:'3rd Place' },
+    { key: 'r32', label: 'Round of 32' },
+    { key: 'r16', label: 'Round of 16' },
+    { key: 'qf',  label: 'Quarter-Finals' },
+    { key: 'sf',  label: 'Semi-Finals' },
+    { key: 'final', label: 'Final' },
   ];
 
-  const eliminatedInKO = getEliminatedTeams(data);
+  const koMatches = Object.values(data.knockoutMatches);
+
+  if (koMatches.length === 0) {
+    el.innerHTML += `
+      <div class="card">
+        <div class="empty-state" style="padding:30px 10px;">
+          <div style="font-size:36px; margin-bottom:10px;">🏆</div>
+          <div style="font-size:14px; font-weight:600; color:var(--white); margin-bottom:6px;">Bracket Coming Soon</div>
+          <div style="font-size:13px;">The knockout bracket will appear here once the group stage is complete.</div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Determine which teams have been eliminated in KO
+  const eliminatedInKO = new Set();
+  koMatches.forEach(m => {
+    if (!m.played) return;
+    const hs = parseInt(m.homeScore) || 0;
+    const as = parseInt(m.awayScore) || 0;
+    if (hs > as) eliminatedInKO.add(m.away);
+    else if (as > hs) eliminatedInKO.add(m.home);
+  });
 
   rounds.forEach(r => {
-    const matchIds = BRACKET_STRUCTURE.filter(b => b.round === r.key).map(b => b.id);
-    const uniqueIds = [...new Set(matchIds)];
-    if (uniqueIds.length === 0) return;
+    const rm = koMatches.filter(m => m.round === r.key);
+    if (rm.length === 0) return;
 
     const section = document.createElement('div');
     section.innerHTML = `<div class="ko-round-header">${r.label}</div>`;
 
-    uniqueIds.forEach(mid => {
-      const m = getMatchData(data, mid);
-      if (!m.home && !m.away) return;
-      section.appendChild(renderMatchCard(m, mid, eliminatedInKO));
+    rm.forEach((m, idx) => {
+      const hs = m.played ? parseInt(m.homeScore) : null;
+      const as = m.played ? parseInt(m.awayScore) : null;
+      const homeWon = m.played && hs > as;
+      const awayWon = m.played && as > hs;
+      const home = getTeam(m.home);
+      const away = getTeam(m.away);
+
+      const homeName = home ? `${home.flag || ''} ${home.name}` : (m.home || 'TBD');
+      const awayName = away ? `${away.flag || ''} ${away.name}` : (m.away || 'TBD');
+
+      const homeClass = homeWon ? 'winner' : (awayWon ? 'loser' : '');
+      const awayClass = awayWon ? 'winner' : (homeWon ? 'loser' : '');
+
+      const matchDiv = document.createElement('div');
+      matchDiv.className = 'ko-match';
+      matchDiv.innerHTML = `
+        <div class="ko-team ${homeClass}">
+          <span class="ko-team-name">${m.home ? homeName : '<span class="ko-tbd">TBD</span>'}</span>
+          ${m.played ? `<span class="ko-score">${hs}</span>` : ''}
+        </div>
+        <div class="ko-team ${awayClass}">
+          <span class="ko-team-name">${m.away ? awayName : '<span class="ko-tbd">TBD</span>'}</span>
+          ${m.played ? `<span class="ko-score">${as}</span>` : ''}
+        </div>`;
+      section.appendChild(matchDiv);
     });
 
-    el.appendChild(section);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.paddingBottom = '6px';
+    card.appendChild(section);
+    el.appendChild(card);
   });
-}
-
-function getEliminatedTeams(data) {
-  const elim = new Set();
-  if (!data.knockoutMatches) return elim;
-  Object.values(data.knockoutMatches).forEach(m => {
-    if (!m.played) return;
-    const hs = parseInt(m.homeScore) || 0;
-    const as = parseInt(m.awayScore) || 0;
-    if (hs > as) elim.add(m.away);
-    else if (as > hs) elim.add(m.home);
-  });
-  return elim;
-}
-
-function renderMatchCard(m, matchId, eliminatedInKO) {
-  const hs = m.played ? (parseInt(m.homeScore) ?? '') : '';
-  const as = m.played ? (parseInt(m.awayScore) ?? '') : '';
-  const homeWon = m.played && hs > as;
-  const awayWon = m.played && as > hs;
-  const home = getTeam(m.home);
-  const away = getTeam(m.away);
-
-  const teamLine = (team, teamId, won, score) => {
-    const name = team ? `${team.name}` : (teamId || '');
-    const cls = won ? 'winner' : (!m.played ? '' : 'loser');
-    return `<div class="ko-team ${cls}">
-      <span class="ko-team-name">${name || '<span class="ko-tbd">TBD</span>'}</span>
-      ${m.played ? `<span class="ko-score">${score}</span>` : ''}
-    </div>`;
-  };
-
-  const div = document.createElement('div');
-  div.className = 'ko-match';
-  div.style.marginBottom = '8px';
-  div.innerHTML =
-    teamLine(home, m.home, homeWon, hs) +
-    teamLine(away, m.away, awayWon, as);
-  return div;
-}
-
-function renderBracketVisual(el, data) {
-  const eliminatedInKO = getEliminatedTeams(data);
-
-  // Helper to render a single team slot in bracket
-  function teamSlot(teamId, opponentId, matchData, isWinner) {
-    const team = getTeam(teamId);
-    const name = team ? team.name : (teamId || 'TBD');
-    const score = matchData && matchData.played
-      ? (isWinner ? Math.max(parseInt(matchData.homeScore)||0, parseInt(matchData.awayScore)||0)
-                  : Math.min(parseInt(matchData.homeScore)||0, parseInt(matchData.awayScore)||0))
-      : '';
-
-    // Determine if this team specifically won
-    let actualWinner = false;
-    if (matchData && matchData.played) {
-      const hs = parseInt(matchData.homeScore) || 0;
-      const as = parseInt(matchData.awayScore) || 0;
-      if (teamId === matchData.home && hs > as) actualWinner = true;
-      if (teamId === matchData.away && as > hs) actualWinner = true;
-    }
-    const actualLoser = matchData && matchData.played && !actualWinner && !!teamId;
-
-    return `<div class="bk-team ${actualWinner ? 'bk-winner' : ''} ${actualLoser ? 'bk-loser' : ''}">
-      <span class="bk-name">${name}</span>
-      ${matchData && matchData.played ? `<span class="bk-score">${teamId === matchData.home ? (parseInt(matchData.homeScore)||0) : (parseInt(matchData.awayScore)||0)}</span>` : ''}
-    </div>`;
-  }
-
-  function matchBox(matchId) {
-    const m = getMatchData(data, matchId);
-    const home = m.home || '';
-    const away = m.away || '';
-    return `<div class="bk-match" data-mid="${matchId}">
-      ${teamSlot(home, away, m, false)}
-      ${teamSlot(away, home, m, false)}
-    </div>`;
-  }
-
-  // Build the visual bracket — horizontal scroll wrapper
-  // Structure: R32(left) | R16(left) | QF(left) | SF(left) | FINAL | SF(right) | QF(right) | R16(right) | R32(right)
-  // On mobile we do a simplified left→right flow showing just left half then right half
-
-  const wrapper = document.createElement('div');
-  wrapper.className = 'bk-wrapper';
-  wrapper.innerHTML = `
-<style>
-.bk-wrapper {
-  overflow-x: auto;
-  overflow-y: visible;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom: 12px;
-  margin: 0 -14px;
-  padding-left: 14px;
-  padding-right: 14px;
-}
-.bk-grid {
-  display: grid;
-  grid-template-columns: repeat(9, 120px);
-  grid-template-rows: repeat(32, 22px);
-  gap: 0;
-  min-width: 1100px;
-  position: relative;
-}
-/* Column headers */
-.bk-col-header {
-  font-family: var(--font-display);
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  color: var(--gold);
-  text-align: center;
-  text-transform: uppercase;
-  padding: 0 2px 6px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.bk-match {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  position: absolute;
-  width: 116px;
-  border: 1px solid var(--card-border);
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--card-bg);
-  cursor: pointer;
-}
-.bk-match:hover { border-color: var(--gold); }
-.bk-team {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 6px;
-  font-size: 10px;
-  min-height: 22px;
-  gap: 4px;
-  border-bottom: 1px solid var(--card-border);
-}
-.bk-team:last-child { border-bottom: none; }
-.bk-winner { background: rgba(240,180,41,0.15); color: var(--gold); font-weight: 700; }
-.bk-loser { color: #445544; }
-.bk-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.bk-score { font-family: var(--font-display); font-size: 13px; flex-shrink:0; }
-.bk-winner .bk-score { color: var(--gold); }
-.bk-loser .bk-score { color: #445544; }
-/* Connector lines */
-.bk-line {
-  position: absolute;
-  background: var(--card-border);
-}
-.bk-center-label {
-  font-family: var(--font-display);
-  font-size: 18px;
-  color: var(--gold);
-  letter-spacing: 2px;
-  text-align: center;
-}
-.bk-trophy {
-  font-size: 28px;
-  text-align: center;
-  line-height: 1;
-}
-</style>`;
-
-  // Use a positioned container approach for bracket lines
-  const MATCH_H = 48;    // height of a match box (2 teams × ~22px + border)
-  const COL_W = 124;     // column width
-  const ROW_UNIT = 8;    // base spacing unit
-  const GAP = 6;         // gap between matches
-
-  // We'll use a canvas-free approach: absolutely positioned divs in a relative container
-  const container = document.createElement('div');
-  container.style.cssText = `position:relative; overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; margin:0 -14px; padding:0 14px 16px;`;
-
-  const COLS = 9;
-  const TOTAL_W = COLS * COL_W + 20;
-
-  // Total height: R32 has 8 matches per side. Each match = 48px + spacing between groups
-  // Left R32: 8 matches. Spacing: within group=gap, between groups=larger
-  // Layout heights for each round on the left: R32=8 matches, R16=4, QF=2, SF=1, Final=1
-  // Spacing: R32 pairs are spaced so they feed naturally into R16
-
-  // Let's compute positions mathematically
-  // The left R32 matches occupy the full height, pairs connected to R16
-  // Total bracket height determined by R32 count
-
-  const TOTAL_ROWS = 8; // R32 matches per side
-  const MATCH_BOX_H = 46;
-  const INNER_GAP = 4;   // gap within a pair
-  const OUTER_GAP = 16;  // gap between pairs
-
-  // Height of a "pair" of R32 matches (feeds into one R16 match)
-  const PAIR_H = MATCH_BOX_H * 2 + INNER_GAP + OUTER_GAP;
-  const TOTAL_H = PAIR_H * 4 + 40; // 4 pairs + header
-
-  const HEADER_H = 32;
-
-  const inner = document.createElement('div');
-  inner.style.cssText = `position:relative; width:${TOTAL_W}px; height:${TOTAL_H + HEADER_H}px;`;
-
-  // Column header labels
-  const colLabels = ['R of 32','R of 16','QF','SF','FINAL','SF','QF','R of 16','R of 32'];
-  const colColors = ['var(--muted)','var(--muted)','var(--muted)','var(--muted)','var(--gold)','var(--muted)','var(--muted)','var(--muted)','var(--muted)'];
-  colLabels.forEach((label, i) => {
-    const h = document.createElement('div');
-    h.style.cssText = `position:absolute; top:0; left:${i*COL_W+2}px; width:${COL_W-4}px; text-align:center; font-family:var(--font-display); font-size:10px; letter-spacing:1.5px; color:${colColors[i]}; text-transform:uppercase; white-space:nowrap;`;
-    h.textContent = label;
-    inner.appendChild(h);
-  });
-
-  // Helper: place a match box
-  function placeMatch(matchId, col, topPx) {
-    const m = getMatchData(data, matchId);
-    const home = getTeam(m.home);
-    const away = getTeam(m.away);
-    const hs = m.played ? (parseInt(m.homeScore)||0) : null;
-    const as = m.played ? (parseInt(m.awayScore)||0) : null;
-    const homeWon = m.played && hs > as;
-    const awayWon = m.played && as > hs;
-
-    const div = document.createElement('div');
-    div.style.cssText = `position:absolute; left:${col*COL_W+2}px; top:${HEADER_H+topPx}px; width:${COL_W-8}px; border:1px solid var(--card-border); border-radius:6px; overflow:hidden; background:var(--card-bg); cursor:pointer; transition: border-color 0.15s;`;
-    div.onmouseenter = () => div.style.borderColor = 'var(--gold)';
-    div.onmouseleave = () => div.style.borderColor = 'var(--card-border)';
-
-    const makeTeam = (teamId, won, lost, score) => {
-      const t = getTeam(teamId);
-      const name = t ? t.name : (teamId || '—');
-      const d = document.createElement('div');
-      d.style.cssText = `display:flex; align-items:center; justify-content:space-between; padding:4px 7px; font-size:10px; min-height:23px; gap:3px; border-bottom:1px solid var(--card-border);${won?' background:rgba(240,180,41,0.14); color:var(--gold); font-weight:700;':lost?' color:#3d5545;':''}`;
-      d.innerHTML = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name || '<i style="color:#3d5545">TBD</i>'}</span>${score!==null?`<span style="font-family:var(--font-display);font-size:13px;flex-shrink:0;${won?' color:var(--gold);':' color:#3d5545;'}">${score}</span>`:''}`;
-      return d;
-    };
-
-    div.appendChild(makeTeam(m.home, homeWon, !homeWon && m.played, hs));
-    const b2 = makeTeam(m.away, awayWon, !awayWon && m.played, as);
-    b2.style.borderBottom = 'none';
-    div.appendChild(b2);
-
-    // Click to open admin quick-edit if authed
-    div.onclick = () => {
-      if (adminAuthed) openMatchEditor(matchId);
-    };
-
-    inner.appendChild(div);
-    return HEADER_H + topPx + MATCH_BOX_H / 2; // return center Y of this match
-  }
-
-  // Helper: draw connector line
-  function hLine(x1, x2, y) {
-    const d = document.createElement('div');
-    d.style.cssText = `position:absolute; left:${x1}px; top:${y}px; width:${x2-x1}px; height:1px; background:var(--card-border);`;
-    inner.appendChild(d);
-  }
-  function vLine(x, y1, y2) {
-    const d = document.createElement('div');
-    d.style.cssText = `position:absolute; left:${x}px; top:${y1}px; width:1px; height:${y2-y1}px; background:var(--card-border);`;
-    inner.appendChild(d);
-  }
-
-  // Layout computation
-  // Left side: matches in col 0 (R32), col 1 (R16), col 2 (QF), col 3 (SF)
-  // Right side: matches in col 8, 7, 6, 5
-  // Center: col 4 = Final
-
-  // R32 left: 8 matches arranged in 4 pairs
-  // Pair spacing: each pair occupies PAIR_H pixels
-  const leftR32Ids  = ['r32_L1','r32_L2','r32_L3','r32_L4','r32_L5','r32_L6','r32_L7','r32_L8'];
-  const rightR32Ids = ['r32_R1','r32_R2','r32_R3','r32_R4','r32_R5','r32_R6','r32_R7','r32_R8'];
-  const leftR16Ids  = ['r16_L1','r16_L2','r16_L3','r16_L4'];
-  const rightR16Ids = ['r16_R1','r16_R2','r16_R3','r16_R4'];
-  const leftQFIds   = ['qf_L1','qf_L2'];
-  const rightQFIds  = ['qf_R1','qf_R2'];
-
-  // Compute Y positions for R32 matches
-  // Pair 0: matches 0,1 → Y = 0, MATCH_BOX_H + INNER_GAP
-  // Pair 1: matches 2,3 → Y = PAIR_H, PAIR_H + MATCH_BOX_H + INNER_GAP
-  // etc.
-
-  function pairTopY(pairIdx) {
-    return pairIdx * PAIR_H;
-  }
-  function matchTopY(matchIdx) {
-    const pairIdx = Math.floor(matchIdx / 2);
-    const posInPair = matchIdx % 2;
-    return pairTopY(pairIdx) + posInPair * (MATCH_BOX_H + INNER_GAP);
-  }
-
-  // ── Place Left R32 ──
-  const leftR32CenterYs = leftR32Ids.map((mid, i) => placeMatch(mid, 0, matchTopY(i)));
-
-  // ── Place Right R32 ──
-  const rightR32CenterYs = rightR32Ids.map((mid, i) => placeMatch(mid, 8, matchTopY(i)));
-
-  // ── R16 Left: each match's Y is midpoint of its two feeder matches ──
-  const leftR16CenterYs = leftR16Ids.map((mid, i) => {
-    const top = leftR32CenterYs[i*2];
-    const bot = leftR32CenterYs[i*2+1];
-    const midY = (top + bot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-    const centerY = placeMatch(mid, 1, midY);
-    // Connector lines
-    const matchRight = 1*COL_W + (COL_W-8);
-    const prevRight  = 0*COL_W + (COL_W-8);
-    hLine(prevRight+2, 1*COL_W+2, top);
-    hLine(prevRight+2, 1*COL_W+2, bot);
-    vLine(1*COL_W+2-6, top, bot);
-    hLine(1*COL_W+2-6, 1*COL_W+2, centerY);
-    return centerY;
-  });
-
-  // ── R16 Right ──
-  const rightR16CenterYs = rightR16Ids.map((mid, i) => {
-    const top = rightR32CenterYs[i*2];
-    const bot = rightR32CenterYs[i*2+1];
-    const midY = (top + bot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-    const centerY = placeMatch(mid, 7, midY);
-    const prevLeft = 8*COL_W;
-    hLine(7*COL_W+(COL_W-8)+2, prevLeft, top);
-    hLine(7*COL_W+(COL_W-8)+2, prevLeft, bot);
-    vLine(prevLeft, top, bot);
-    hLine(7*COL_W+(COL_W-8)+2, prevLeft, centerY);
-    return centerY;
-  });
-
-  // ── QF Left ──
-  const leftQFCenterYs = leftQFIds.map((mid, i) => {
-    const top = leftR16CenterYs[i*2];
-    const bot = leftR16CenterYs[i*2+1];
-    const midY = (top + bot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-    const centerY = placeMatch(mid, 2, midY);
-    const prevRight = 1*COL_W+(COL_W-8);
-    hLine(prevRight+2, 2*COL_W+2, top);
-    hLine(prevRight+2, 2*COL_W+2, bot);
-    vLine(2*COL_W+2-6, top, bot);
-    hLine(2*COL_W+2-6, 2*COL_W+2, centerY);
-    return centerY;
-  });
-
-  // ── QF Right ──
-  const rightQFCenterYs = rightQFIds.map((mid, i) => {
-    const top = rightR16CenterYs[i*2];
-    const bot = rightR16CenterYs[i*2+1];
-    const midY = (top + bot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-    const centerY = placeMatch(mid, 6, midY);
-    const prevLeft = 7*COL_W;
-    hLine(6*COL_W+(COL_W-8)+2, prevLeft, top);
-    hLine(6*COL_W+(COL_W-8)+2, prevLeft, bot);
-    vLine(prevLeft, top, bot);
-    hLine(6*COL_W+(COL_W-8)+2, prevLeft, centerY);
-    return centerY;
-  });
-
-  // ── SF Left ──
-  const sfLtop = leftQFCenterYs[0];
-  const sfLbot = leftQFCenterYs[1];
-  const sfLmidY = (sfLtop + sfLbot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-  const sfLcenterY = placeMatch('sf_L', 3, sfLmidY);
-  hLine(2*COL_W+(COL_W-8)+2, 3*COL_W+2, sfLtop);
-  hLine(2*COL_W+(COL_W-8)+2, 3*COL_W+2, sfLbot);
-  vLine(3*COL_W+2-6, sfLtop, sfLbot);
-  hLine(3*COL_W+2-6, 3*COL_W+2, sfLcenterY);
-
-  // ── SF Right ──
-  const sfRtop = rightQFCenterYs[0];
-  const sfRbot = rightQFCenterYs[1];
-  const sfRmidY = (sfRtop + sfRbot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-  const sfRcenterY = placeMatch('sf_R', 5, sfRmidY);
-  hLine(5*COL_W+(COL_W-8)+2, 6*COL_W, sfRtop);
-  hLine(5*COL_W+(COL_W-8)+2, 6*COL_W, sfRbot);
-  vLine(6*COL_W, sfRtop, sfRbot);
-  hLine(5*COL_W+(COL_W-8)+2, 6*COL_W, sfRcenterY);
-
-  // ── FINAL ──
-  const finalMidY = (sfLcenterY + sfRcenterY) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-  const finalCenterY = placeMatch('final', 4, finalMidY);
-  // Trophy above final
-  const trophy = document.createElement('div');
-  trophy.style.cssText = `position:absolute; left:${4*COL_W}px; top:${HEADER_H + finalMidY - 32}px; width:${COL_W-8}px; text-align:center; font-size:20px;`;
-  trophy.textContent = '🏆';
-  inner.appendChild(trophy);
-  // Connectors from SF to Final
-  hLine(3*COL_W+(COL_W-8)+2, 4*COL_W+2, sfLcenterY);
-  hLine(4*COL_W+(COL_W-8)+2, 5*COL_W, sfRcenterY);
-  vLine(4*COL_W+2-6, sfLcenterY, finalCenterY);
-  vLine(5*COL_W, sfRcenterY, finalCenterY);
-
-  // ── 3rd place match ──
-  const thirdY = finalMidY + MATCH_BOX_H + 24;
-  placeMatch('third', 4, thirdY);
-  const thirdLabel = document.createElement('div');
-  thirdLabel.style.cssText = `position:absolute; left:${4*COL_W}px; top:${HEADER_H + thirdY - 18}px; width:${COL_W-8}px; text-align:center; font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:1px;`;
-  thirdLabel.textContent = '3rd Place';
-  inner.appendChild(thirdLabel);
-
-  // Update total height
-  inner.style.height = `${HEADER_H + thirdY + MATCH_BOX_H + 20}px`;
-
-  container.appendChild(inner);
-  wrapper.appendChild(container);
-  el.appendChild(wrapper);
-
-  // Scroll hint
-  const hint = document.createElement('div');
-  hint.style.cssText = 'text-align:center; font-size:11px; color:var(--muted); padding:6px 0 2px; letter-spacing:0.5px;';
-  hint.textContent = '← scroll to see full bracket →';
-  el.appendChild(hint);
-
-  // Admin quick-edit modal
-  window.openMatchEditor = function(matchId) {
-    const existing = document.getElementById('match-editor-modal');
-    if (existing) existing.remove();
-
-    const data = getData();
-    const m = getMatchData(data, matchId);
-    const home = getTeam(m.home);
-    const away = getTeam(m.away);
-
-    const modal = document.createElement('div');
-    modal.id = 'match-editor-modal';
-    modal.style.cssText = `position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:999; display:flex; align-items:center; justify-content:center; padding:20px;`;
-    modal.innerHTML = `
-      <div style="background:var(--card-bg); border:1px solid var(--card-border); border-radius:12px; padding:20px; width:100%; max-width:340px;">
-        <div style="font-family:var(--font-display); font-size:18px; color:var(--gold); margin-bottom:14px; letter-spacing:1px;">Edit Match</div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
-          <div>
-            <label style="margin-bottom:4px; margin-top:0;">Home Team</label>
-            <select id="me-home" style="font-size:13px;">
-              <option value="">— TBD —</option>
-              ${ALL_TEAMS.map(t=>`<option value="${t.id}" ${t.id===m.home?'selected':''}>${t.name}</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <label style="margin-bottom:4px; margin-top:0;">Away Team</label>
-            <select id="me-away" style="font-size:13px;">
-              <option value="">— TBD —</option>
-              ${ALL_TEAMS.map(t=>`<option value="${t.id}" ${t.id===m.away?'selected':''}>${t.name}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-        <div style="display:grid; grid-template-columns:1fr auto 1fr; gap:8px; align-items:center; margin-bottom:14px;">
-          <input type="number" id="me-hs" value="${m.homeScore||''}" placeholder="—" class="score-input" style="width:100%!important; text-align:center;">
-          <span class="vs-label" style="font-size:16px;">–</span>
-          <input type="number" id="me-as" value="${m.awayScore||''}" placeholder="—" class="score-input" style="width:100%!important; text-align:center;">
-        </div>
-        <div style="display:flex; gap:8px;">
-          <button class="btn full" id="me-save" style="margin-top:0;">Save</button>
-          <button class="btn secondary full" id="me-cancel" style="margin-top:0;">Cancel</button>
-        </div>
-      </div>`;
-
-    document.body.appendChild(modal);
-
-    document.getElementById('me-cancel').onclick = () => modal.remove();
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-
-    document.getElementById('me-save').onclick = async () => {
-      const d = getData();
-      if (!d.knockoutMatches) d.knockoutMatches = {};
-      const homeVal = document.getElementById('me-home').value;
-      const awayVal = document.getElementById('me-away').value;
-      const hs = document.getElementById('me-hs').value;
-      const as = document.getElementById('me-as').value;
-      const round = matchId.split('_')[0];
-      d.knockoutMatches[matchId] = {
-        round: matchId === 'final' ? 'final' : matchId === 'third' ? 'third' : round,
-        home: homeVal,
-        away: awayVal,
-        homeScore: hs,
-        awayScore: as,
-        played: hs !== '' && as !== '',
-      };
-      await saveData(d);
-      modal.remove();
-      knockout(el);
-    };
-  };
 }
 
 // ── PICK POPULARITY ──
@@ -2232,28 +1683,109 @@ function adminAdvancement(el) {
 }
 
 function adminKnockout(el) {
-  el.innerHTML = `
-    <div class="card">
-      <div class="card-title">Edit Knockout Results</div>
-      <p style="font-size:13px; color:var(--muted); line-height:1.7; margin-bottom:14px;">
-        Since you're logged in as admin, you can edit any match directly from the 
-        <strong style="color:var(--white)">Bracket</strong> page — just tap any matchup box to update the teams and score.
-      </p>
-      <button class="btn full" onclick="navigate('knockout')">Open Bracket →</button>
-    </div>
+  const data = getData();
+  el.innerHTML = '';
 
-    <div class="card" style="margin-top:12px;">
-      <div class="card-title" style="color:var(--danger);">Danger Zone</div>
-      <p style="font-size:12px; color:var(--muted); margin-bottom:10px;">This clears all knockout match results but leaves R32 teams intact (they're pre-seeded from the bracket).</p>
-      <button class="btn danger full" id="clear-ko">Clear All Knockout Results</button>
-    </div>`;
+  // Get advanced teams for dropdowns
+  const advancedTeamIds = Object.entries(data.advancement)
+    .filter(([, info]) => info.advanced)
+    .map(([id]) => id);
+  const advancedTeams = advancedTeamIds
+    .map(id => getTeam(id))
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  document.getElementById('clear-ko').onclick = async () => {
+  const rounds = [
+    { key: 'r32',   label: 'Round of 32',    matchCount: 16 },
+    { key: 'r16',   label: 'Round of 16',    matchCount: 8  },
+    { key: 'qf',    label: 'Quarter-Finals', matchCount: 4  },
+    { key: 'sf',    label: 'Semi-Finals',    matchCount: 2  },
+    { key: 'final', label: 'Final',          matchCount: 1  },
+  ];
+
+  // Build team dropdown options
+  const teamOptions = `<option value="">— TBD —</option>` +
+    ALL_TEAMS.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+
+  rounds.forEach(r => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<div class="card-title" style="font-size:15px; margin-bottom:10px;">${r.label}</div>`;
+
+    const existing = Object.entries(data.knockoutMatches)
+      .filter(([, m]) => m.round === r.key)
+      .map(([id, m]) => ({ id, ...m }));
+
+    // Pad to matchCount
+    while (existing.length < r.matchCount) {
+      const id = `${r.key}_${existing.length + 1}`;
+      existing.push({ id, round: r.key, home: '', away: '', homeScore: '', awayScore: '', played: false });
+    }
+
+    existing.slice(0, r.matchCount).forEach((m, idx) => {
+      const matchDiv = document.createElement('div');
+      matchDiv.className = 'ko-admin-match';
+      matchDiv.dataset.kid = m.id;
+      matchDiv.innerHTML = `
+        <div class="ko-match-num">Match ${idx + 1}</div>
+        <div class="ko-admin-teams">
+          <select data-role="home" style="font-size:13px; padding:7px 8px;">
+            ${ALL_TEAMS.map(t => `<option value="${t.id}" ${t.id === m.home ? 'selected' : ''}>${t.name}</option>`).join('')}
+            <option value="" ${!m.home ? 'selected' : ''}>— TBD —</option>
+          </select>
+          <span class="vs-label" style="font-size:13px; padding:0 2px;">vs</span>
+          <select data-role="away" style="font-size:13px; padding:7px 8px;">
+            ${ALL_TEAMS.map(t => `<option value="${t.id}" ${t.id === m.away ? 'selected' : ''}>${t.name}</option>`).join('')}
+            <option value="" ${!m.away ? 'selected' : ''}>— TBD —</option>
+          </select>
+        </div>
+        <div class="ko-admin-scores">
+          <input type="number" class="score-input" value="${m.homeScore}" placeholder="—" data-role="hscore" min="0" max="20" style="width:100%!important;">
+          <span class="vs-label">–</span>
+          <input type="number" class="score-input" value="${m.awayScore}" placeholder="—" data-role="ascore" min="0" max="20" style="width:100%!important;">
+        </div>`;
+      card.appendChild(matchDiv);
+    });
+
+    el.appendChild(card);
+  });
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn full';
+  saveBtn.textContent = 'Save Knockout Results';
+  saveBtn.onclick = async () => {
+    const data = getData();
+    el.querySelectorAll('[data-kid]').forEach(row => {
+      const kid = row.dataset.kid;
+      const round = kid.split('_')[0];
+      const home = row.querySelector('[data-role="home"]').value.trim();
+      const away = row.querySelector('[data-role="away"]').value.trim();
+      const hs = row.querySelector('[data-role="hscore"]').value;
+      const as = row.querySelector('[data-role="ascore"]').value;
+      if (!home && !away) return;
+      data.knockoutMatches[kid] = {
+        round, home, away,
+        homeScore: hs, awayScore: as,
+        played: hs !== '' && as !== '',
+      };
+    });
+    await saveData(data);
+    showFlash(el, 'Knockout results saved!');
+  };
+  el.appendChild(saveBtn);
+
+  // Danger zone
+  const danger = document.createElement('div');
+  danger.className = 'card';
+  danger.style.marginTop = '20px';
+  danger.innerHTML = `
+    <div class="card-title" style="color:var(--danger);">Danger Zone</div>
+    <button class="btn danger full" id="clear-ko">Clear All Knockout Matches</button>`;
+  el.appendChild(danger);
+  document.getElementById('clear-ko').onclick = () => {
     if (confirm('Clear all knockout match data?')) {
-      const d = getData();
-      d.knockoutMatches = {};
-      await saveData(d);
-      showFlash(el, 'Knockout matches cleared.');
+      const d = getData(); d.knockoutMatches = {}; saveData(d);
+      showFlash(el, 'Knockout matches cleared.'); adminKnockout(el);
     }
   };
 }
