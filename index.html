@@ -105,6 +105,10 @@
     margin: 0 auto;
     padding: 16px 14px 80px;
   }
+  #page.page-wide {
+    max-width: 100%;
+    padding: 6px 8px 12px;
+  }
 
   /* ── CARDS ── */
   .card {
@@ -811,10 +815,12 @@ function computeScores(data) {
     });
 
     // Advancement points
+    // +1 for advancing to knockout, +1 additional for winning group
+    // groupWinner implies advanced, so we handle both cases
     Object.entries(data.advancement).forEach(([teamId, info]) => {
       if (!picks.has(teamId)) return;
-      if (info.advanced) score += 1;
-      if (info.groupWinner) score += 1;
+      if (info.advanced || info.groupWinner) score += 1;  // advancement bonus
+      if (info.groupWinner) score += 1;                    // group winner bonus
     });
 
     // Knockout round points — works with both old and new match ID formats
@@ -856,6 +862,7 @@ function render() {
     home, picks, leaderboard, matches, knockout, popularity, rules, admin
   };
   el.innerHTML = '';
+  el.classList.toggle('page-wide', currentPage === 'knockout');
   (pages[currentPage] || home)(el);
 }
 
@@ -1539,408 +1546,264 @@ function renderMatchCard(m, matchId, eliminatedInKO) {
 }
 
 function renderBracketVisual(el, data) {
-  const eliminatedInKO = getEliminatedTeams(data);
+  // ── Compute available space and scale everything to fit ──
+  const pageEl = document.getElementById('page');
+  const availW = (pageEl ? pageEl.clientWidth : window.innerWidth) - 16;
 
-  // Helper to render a single team slot in bracket
-  function teamSlot(teamId, opponentId, matchData, isWinner) {
-    const team = getTeam(teamId);
-    const name = team ? team.name : (teamId || 'TBD');
-    const score = matchData && matchData.played
-      ? (isWinner ? Math.max(parseInt(matchData.homeScore)||0, parseInt(matchData.awayScore)||0)
-                  : Math.min(parseInt(matchData.homeScore)||0, parseInt(matchData.awayScore)||0))
-      : '';
+  // Available height = viewport minus sticky header+nav (~90px) minus bracket page header (~52px) minus small buffer
+  const usedH = 90 + 52 + 16;
+  const availH = window.innerHeight - usedH;
 
-    // Determine if this team specifically won
-    let actualWinner = false;
-    if (matchData && matchData.played) {
-      const hs = parseInt(matchData.homeScore) || 0;
-      const as = parseInt(matchData.awayScore) || 0;
-      if (teamId === matchData.home && hs > as) actualWinner = true;
-      if (teamId === matchData.away && as > hs) actualWinner = true;
-    }
-    const actualLoser = matchData && matchData.played && !actualWinner && !!teamId;
-
-    return `<div class="bk-team ${actualWinner ? 'bk-winner' : ''} ${actualLoser ? 'bk-loser' : ''}">
-      <span class="bk-name">${name}</span>
-      ${matchData && matchData.played ? `<span class="bk-score">${teamId === matchData.home ? (parseInt(matchData.homeScore)||0) : (parseInt(matchData.awayScore)||0)}</span>` : ''}
-    </div>`;
-  }
-
-  function matchBox(matchId) {
-    const m = getMatchData(data, matchId);
-    const home = m.home || '';
-    const away = m.away || '';
-    return `<div class="bk-match" data-mid="${matchId}">
-      ${teamSlot(home, away, m, false)}
-      ${teamSlot(away, home, m, false)}
-    </div>`;
-  }
-
-  // Build the visual bracket — horizontal scroll wrapper
-  // Structure: R32(left) | R16(left) | QF(left) | SF(left) | FINAL | SF(right) | QF(right) | R16(right) | R32(right)
-  // On mobile we do a simplified left→right flow showing just left half then right half
-
-  const wrapper = document.createElement('div');
-  wrapper.className = 'bk-wrapper';
-  wrapper.innerHTML = `
-<style>
-.bk-wrapper {
-  overflow-x: auto;
-  overflow-y: visible;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom: 12px;
-  margin: 0 -14px;
-  padding-left: 14px;
-  padding-right: 14px;
-}
-.bk-grid {
-  display: grid;
-  grid-template-columns: repeat(9, 120px);
-  grid-template-rows: repeat(32, 22px);
-  gap: 0;
-  min-width: 1100px;
-  position: relative;
-}
-/* Column headers */
-.bk-col-header {
-  font-family: var(--font-display);
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  color: var(--gold);
-  text-align: center;
-  text-transform: uppercase;
-  padding: 0 2px 6px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.bk-match {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  position: absolute;
-  width: 116px;
-  border: 1px solid var(--card-border);
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--card-bg);
-  cursor: pointer;
-}
-.bk-match:hover { border-color: var(--gold); }
-.bk-team {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 6px;
-  font-size: 10px;
-  min-height: 22px;
-  gap: 4px;
-  border-bottom: 1px solid var(--card-border);
-}
-.bk-team:last-child { border-bottom: none; }
-.bk-winner { background: rgba(240,180,41,0.15); color: var(--gold); font-weight: 700; }
-.bk-loser { color: #445544; }
-.bk-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.bk-score { font-family: var(--font-display); font-size: 13px; flex-shrink:0; }
-.bk-winner .bk-score { color: var(--gold); }
-.bk-loser .bk-score { color: #445544; }
-/* Connector lines */
-.bk-line {
-  position: absolute;
-  background: var(--card-border);
-}
-.bk-center-label {
-  font-family: var(--font-display);
-  font-size: 18px;
-  color: var(--gold);
-  letter-spacing: 2px;
-  text-align: center;
-}
-.bk-trophy {
-  font-size: 28px;
-  text-align: center;
-  line-height: 1;
-}
-</style>`;
-
-  // Use a positioned container approach for bracket lines
-  const MATCH_H = 48;    // height of a match box (2 teams × ~22px + border)
-  const COL_W = 124;     // column width
-  const ROW_UNIT = 8;    // base spacing unit
-  const GAP = 6;         // gap between matches
-
-  // We'll use a canvas-free approach: absolutely positioned divs in a relative container
-  const container = document.createElement('div');
-  container.style.cssText = `position:relative; overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; margin:0 -14px; padding:0 14px 16px;`;
-
+  // Base (design) dimensions at 1× scale
+  const BASE_COL_W    = 124;
+  const BASE_MBH      = 46;   // match box height
+  const BASE_INNER_G  = 4;    // gap between two matches in a pair
+  const BASE_OUTER_G  = 16;   // gap between pairs
+  const BASE_HEADER_H = 26;
   const COLS = 9;
-  const TOTAL_W = COLS * COL_W + 20;
 
-  // Total height: R32 has 8 matches per side. Each match = 48px + spacing between groups
-  // Left R32: 8 matches. Spacing: within group=gap, between groups=larger
-  // Layout heights for each round on the left: R32=8 matches, R16=4, QF=2, SF=1, Final=1
-  // Spacing: R32 pairs are spaced so they feed naturally into R16
+  const BASE_PAIR_H = BASE_MBH * 2 + BASE_INNER_G + BASE_OUTER_G;
+  const BASE_TOTAL_W = COLS * BASE_COL_W + 20;
+  // Total height = 4 pairs + header + 3rd place match + gaps
+  const BASE_TOTAL_H = BASE_PAIR_H * 4 + BASE_HEADER_H + BASE_MBH + 48;
 
-  // Let's compute positions mathematically
-  // The left R32 matches occupy the full height, pairs connected to R16
-  // Total bracket height determined by R32 count
+  const scaleW = availW / BASE_TOTAL_W;
+  const scaleH = availH / BASE_TOTAL_H;
+  const scale  = Math.min(scaleW, scaleH, 1); // never upscale beyond 1×
 
-  const TOTAL_ROWS = 8; // R32 matches per side
-  const MATCH_BOX_H = 46;
-  const INNER_GAP = 4;   // gap within a pair
-  const OUTER_GAP = 16;  // gap between pairs
+  const COL_W    = BASE_COL_W   * scale;
+  const MBH      = BASE_MBH     * scale;
+  const INNER_G  = Math.max(BASE_INNER_G  * scale, 2);
+  const OUTER_G  = Math.max(BASE_OUTER_G  * scale, 4);
+  const HEADER_H = BASE_HEADER_H * scale;
+  const FONT_SZ  = Math.max(Math.round(10 * scale), 7);
+  const SCORE_SZ = Math.max(Math.round(13 * scale), 9);
+  const PAD_V    = Math.max(Math.round(4 * scale), 2);
+  const PAD_H    = Math.max(Math.round(7 * scale), 3);
+  const RADIUS   = Math.max(Math.round(6 * scale), 3);
 
-  // Height of a "pair" of R32 matches (feeds into one R16 match)
-  const PAIR_H = MATCH_BOX_H * 2 + INNER_GAP + OUTER_GAP;
-  const TOTAL_H = PAIR_H * 4 + 40; // 4 pairs + header
+  const PAIR_H   = MBH * 2 + INNER_G + OUTER_G;
+  const TOTAL_W  = COLS * COL_W + 20;
 
-  const HEADER_H = 32;
+  // Container — centered, no overflow
+  const container = document.createElement('div');
+  container.style.cssText = 'position:relative; width:100%;';
 
   const inner = document.createElement('div');
-  inner.style.cssText = `position:relative; width:${TOTAL_W}px; height:${TOTAL_H + HEADER_H}px;`;
+  // Height computed after placing all matches
+  inner.style.cssText = `position:relative; width:${TOTAL_W}px; margin:0 auto;`;
 
-  // Column header labels
+  // Column headers
   const colLabels = ['R of 32','R of 16','QF','SF','FINAL','SF','QF','R of 16','R of 32'];
   const colColors = ['var(--muted)','var(--muted)','var(--muted)','var(--muted)','var(--gold)','var(--muted)','var(--muted)','var(--muted)','var(--muted)'];
   colLabels.forEach((label, i) => {
     const h = document.createElement('div');
-    h.style.cssText = `position:absolute; top:0; left:${i*COL_W+2}px; width:${COL_W-4}px; text-align:center; font-family:var(--font-display); font-size:10px; letter-spacing:1.5px; color:${colColors[i]}; text-transform:uppercase; white-space:nowrap;`;
+    h.style.cssText = `position:absolute; top:0; left:${i*COL_W+2}px; width:${COL_W-4}px; text-align:center; font-family:var(--font-display); font-size:${Math.max(Math.round(10*scale),7)}px; letter-spacing:${scale>0.7?'1.2':'0.4'}px; color:${colColors[i]}; text-transform:uppercase; white-space:nowrap; overflow:hidden;`;
     h.textContent = label;
     inner.appendChild(h);
   });
 
-  // Helper: place a match box
+  // ── placeMatch: absolutely position a match box, return centerY ──
   function placeMatch(matchId, col, topPx) {
     const m = getMatchData(data, matchId);
-    const home = getTeam(m.home);
-    const away = getTeam(m.away);
-    const hs = m.played ? (parseInt(m.homeScore)||0) : null;
-    const as = m.played ? (parseInt(m.awayScore)||0) : null;
+    const hs = m.played ? (parseInt(m.homeScore) || 0) : null;
+    const as = m.played ? (parseInt(m.awayScore) || 0) : null;
     const homeWon = m.played && hs > as;
     const awayWon = m.played && as > hs;
 
-    const div = document.createElement('div');
-    div.style.cssText = `position:absolute; left:${col*COL_W+2}px; top:${HEADER_H+topPx}px; width:${COL_W-8}px; border:1px solid var(--card-border); border-radius:6px; overflow:hidden; background:var(--card-bg); cursor:pointer; transition: border-color 0.15s;`;
-    div.onmouseenter = () => div.style.borderColor = 'var(--gold)';
-    div.onmouseleave = () => div.style.borderColor = 'var(--card-border)';
+    const box = document.createElement('div');
+    box.style.cssText = `position:absolute; left:${col*COL_W+2}px; top:${HEADER_H+topPx}px; width:${COL_W-8}px; border:1px solid var(--card-border); border-radius:${RADIUS}px; overflow:hidden; background:var(--card-bg); cursor:pointer; transition:border-color 0.15s;`;
+    box.onmouseenter = () => box.style.borderColor = 'var(--gold)';
+    box.onmouseleave = () => box.style.borderColor = 'var(--card-border)';
 
-    const makeTeam = (teamId, won, lost, score) => {
+    const makeRow = (teamId, won, lost, score) => {
       const t = getTeam(teamId);
-      const name = t ? t.name : (teamId || '—');
+      const name = t ? t.name : (teamId || '');
       const d = document.createElement('div');
-      d.style.cssText = `display:flex; align-items:center; justify-content:space-between; padding:4px 7px; font-size:10px; min-height:23px; gap:3px; border-bottom:1px solid var(--card-border);${won?' background:rgba(240,180,41,0.14); color:var(--gold); font-weight:700;':lost?' color:#3d5545;':''}`;
-      d.innerHTML = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name || '<i style="color:#3d5545">TBD</i>'}</span>${score!==null?`<span style="font-family:var(--font-display);font-size:13px;flex-shrink:0;${won?' color:var(--gold);':' color:#3d5545;'}">${score}</span>`:''}`;
+      d.style.cssText = `display:flex; align-items:center; justify-content:space-between; padding:${PAD_V}px ${PAD_H}px; font-size:${FONT_SZ}px; min-height:${MBH/2}px; gap:3px; border-bottom:1px solid var(--card-border);` +
+        (won ? ' background:rgba(240,180,41,0.15); color:var(--gold); font-weight:700;' : lost ? ' color:#3d5545;' : '');
+      d.innerHTML = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name || '<i style="color:#3d5545">TBD</i>'}</span>` +
+        (score !== null ? `<span style="font-family:var(--font-display);font-size:${SCORE_SZ}px;flex-shrink:0;${won?' color:var(--gold);':' color:#3d5545;'}">${score}</span>` : '');
       return d;
     };
 
-    div.appendChild(makeTeam(m.home, homeWon, !homeWon && m.played, hs));
-    const b2 = makeTeam(m.away, awayWon, !awayWon && m.played, as);
-    b2.style.borderBottom = 'none';
-    div.appendChild(b2);
+    const r1 = makeRow(m.home, homeWon, !homeWon && m.played, hs);
+    const r2 = makeRow(m.away, awayWon, !awayWon && m.played, as);
+    r2.style.borderBottom = 'none';
+    box.appendChild(r1);
+    box.appendChild(r2);
 
-    // Click to open admin quick-edit if authed
-    div.onclick = () => {
-      if (adminAuthed) openMatchEditor(matchId);
-    };
+    if (adminAuthed) box.onclick = () => openMatchEditor(matchId, el);
 
-    inner.appendChild(div);
-    return HEADER_H + topPx + MATCH_BOX_H / 2; // return center Y of this match
+    inner.appendChild(box);
+    return HEADER_H + topPx + MBH / 2; // return centerY
   }
 
-  // Helper: draw connector line
+  // ── Line helpers ──
   function hLine(x1, x2, y) {
     const d = document.createElement('div');
-    d.style.cssText = `position:absolute; left:${x1}px; top:${y}px; width:${x2-x1}px; height:1px; background:var(--card-border);`;
+    d.style.cssText = `position:absolute; left:${Math.min(x1,x2)}px; top:${y}px; width:${Math.abs(x2-x1)}px; height:1px; background:var(--card-border);`;
     inner.appendChild(d);
   }
   function vLine(x, y1, y2) {
     const d = document.createElement('div');
-    d.style.cssText = `position:absolute; left:${x}px; top:${y1}px; width:1px; height:${y2-y1}px; background:var(--card-border);`;
+    d.style.cssText = `position:absolute; left:${x}px; top:${Math.min(y1,y2)}px; width:1px; height:${Math.abs(y2-y1)}px; background:var(--card-border);`;
     inner.appendChild(d);
   }
 
-  // Layout computation
-  // Left side: matches in col 0 (R32), col 1 (R16), col 2 (QF), col 3 (SF)
-  // Right side: matches in col 8, 7, 6, 5
-  // Center: col 4 = Final
-
-  // R32 left: 8 matches arranged in 4 pairs
-  // Pair spacing: each pair occupies PAIR_H pixels
-  const leftR32Ids  = ['r32_L1','r32_L2','r32_L3','r32_L4','r32_L5','r32_L6','r32_L7','r32_L8'];
-  const rightR32Ids = ['r32_R1','r32_R2','r32_R3','r32_R4','r32_R5','r32_R6','r32_R7','r32_R8'];
-  const leftR16Ids  = ['r16_L1','r16_L2','r16_L3','r16_L4'];
-  const rightR16Ids = ['r16_R1','r16_R2','r16_R3','r16_R4'];
-  const leftQFIds   = ['qf_L1','qf_L2'];
-  const rightQFIds  = ['qf_R1','qf_R2'];
-
-  // Compute Y positions for R32 matches
-  // Pair 0: matches 0,1 → Y = 0, MATCH_BOX_H + INNER_GAP
-  // Pair 1: matches 2,3 → Y = PAIR_H, PAIR_H + MATCH_BOX_H + INNER_GAP
-  // etc.
-
-  function pairTopY(pairIdx) {
-    return pairIdx * PAIR_H;
-  }
+  // ── Layout helpers ──
   function matchTopY(matchIdx) {
-    const pairIdx = Math.floor(matchIdx / 2);
-    const posInPair = matchIdx % 2;
-    return pairTopY(pairIdx) + posInPair * (MATCH_BOX_H + INNER_GAP);
+    const pair = Math.floor(matchIdx / 2);
+    const pos  = matchIdx % 2;
+    return pair * PAIR_H + pos * (MBH + INNER_G);
   }
 
-  // ── Place Left R32 ──
-  const leftR32CenterYs = leftR32Ids.map((mid, i) => placeMatch(mid, 0, matchTopY(i)));
+  // Connector: two feeders (topCY, botCY) → parent at parentCY, direction 'right' or 'left'
+  function connect(topCY, botCY, parentCY, fromX, toX, side) {
+    // horizontal lines from feeder boxes to vertical bar
+    const barX = side === 'right' ? toX - 6 : toX + 6;
+    if (side === 'right') {
+      hLine(fromX, barX, topCY);
+      hLine(fromX, barX, botCY);
+      vLine(barX, topCY, botCY);
+      hLine(barX, toX, parentCY);
+    } else {
+      hLine(barX, fromX, topCY);
+      hLine(barX, fromX, botCY);
+      vLine(barX, topCY, botCY);
+      hLine(toX, barX, parentCY);
+    }
+  }
 
-  // ── Place Right R32 ──
-  const rightR32CenterYs = rightR32Ids.map((mid, i) => placeMatch(mid, 8, matchTopY(i)));
+  // ── Place all matches ──
+  const L32  = ['r32_L1','r32_L2','r32_L3','r32_L4','r32_L5','r32_L6','r32_L7','r32_L8'];
+  const R32  = ['r32_R1','r32_R2','r32_R3','r32_R4','r32_R5','r32_R6','r32_R7','r32_R8'];
+  const L16  = ['r16_L1','r16_L2','r16_L3','r16_L4'];
+  const R16  = ['r16_R1','r16_R2','r16_R3','r16_R4'];
+  const LQF  = ['qf_L1','qf_L2'];
+  const RQF  = ['qf_R1','qf_R2'];
 
-  // ── R16 Left: each match's Y is midpoint of its two feeder matches ──
-  const leftR16CenterYs = leftR16Ids.map((mid, i) => {
-    const top = leftR32CenterYs[i*2];
-    const bot = leftR32CenterYs[i*2+1];
-    const midY = (top + bot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-    const centerY = placeMatch(mid, 1, midY);
-    // Connector lines
-    const matchRight = 1*COL_W + (COL_W-8);
-    const prevRight  = 0*COL_W + (COL_W-8);
-    hLine(prevRight+2, 1*COL_W+2, top);
-    hLine(prevRight+2, 1*COL_W+2, bot);
-    vLine(1*COL_W+2-6, top, bot);
-    hLine(1*COL_W+2-6, 1*COL_W+2, centerY);
-    return centerY;
+  const colRight = c => c * COL_W + (COL_W - 8); // right edge of match in column c
+  const colLeft  = c => c * COL_W + 2;            // left edge
+
+  // Left R32 (col 0)
+  const cL32 = L32.map((id, i) => placeMatch(id, 0, matchTopY(i)));
+  // Right R32 (col 8)
+  const cR32 = R32.map((id, i) => placeMatch(id, 8, matchTopY(i)));
+
+  // Left R16 (col 1) — midpoint of each pair of R32
+  const cL16 = L16.map((id, i) => {
+    const tY = cL32[i*2], bY = cL32[i*2+1];
+    const topPx = (tY + bY) / 2 - MBH / 2 - HEADER_H;
+    const cY = placeMatch(id, 1, topPx);
+    connect(tY, bY, cY, colRight(0), colLeft(1), 'right');
+    return cY;
   });
 
-  // ── R16 Right ──
-  const rightR16CenterYs = rightR16Ids.map((mid, i) => {
-    const top = rightR32CenterYs[i*2];
-    const bot = rightR32CenterYs[i*2+1];
-    const midY = (top + bot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-    const centerY = placeMatch(mid, 7, midY);
-    const prevLeft = 8*COL_W;
-    hLine(7*COL_W+(COL_W-8)+2, prevLeft, top);
-    hLine(7*COL_W+(COL_W-8)+2, prevLeft, bot);
-    vLine(prevLeft, top, bot);
-    hLine(7*COL_W+(COL_W-8)+2, prevLeft, centerY);
-    return centerY;
+  // Right R16 (col 7)
+  const cR16 = R16.map((id, i) => {
+    const tY = cR32[i*2], bY = cR32[i*2+1];
+    const topPx = (tY + bY) / 2 - MBH / 2 - HEADER_H;
+    const cY = placeMatch(id, 7, topPx);
+    connect(tY, bY, cY, colLeft(8), colRight(7), 'left');
+    return cY;
   });
 
-  // ── QF Left ──
-  const leftQFCenterYs = leftQFIds.map((mid, i) => {
-    const top = leftR16CenterYs[i*2];
-    const bot = leftR16CenterYs[i*2+1];
-    const midY = (top + bot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-    const centerY = placeMatch(mid, 2, midY);
-    const prevRight = 1*COL_W+(COL_W-8);
-    hLine(prevRight+2, 2*COL_W+2, top);
-    hLine(prevRight+2, 2*COL_W+2, bot);
-    vLine(2*COL_W+2-6, top, bot);
-    hLine(2*COL_W+2-6, 2*COL_W+2, centerY);
-    return centerY;
+  // Left QF (col 2)
+  const cLQF = LQF.map((id, i) => {
+    const tY = cL16[i*2], bY = cL16[i*2+1];
+    const topPx = (tY + bY) / 2 - MBH / 2 - HEADER_H;
+    const cY = placeMatch(id, 2, topPx);
+    connect(tY, bY, cY, colRight(1), colLeft(2), 'right');
+    return cY;
   });
 
-  // ── QF Right ──
-  const rightQFCenterYs = rightQFIds.map((mid, i) => {
-    const top = rightR16CenterYs[i*2];
-    const bot = rightR16CenterYs[i*2+1];
-    const midY = (top + bot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-    const centerY = placeMatch(mid, 6, midY);
-    const prevLeft = 7*COL_W;
-    hLine(6*COL_W+(COL_W-8)+2, prevLeft, top);
-    hLine(6*COL_W+(COL_W-8)+2, prevLeft, bot);
-    vLine(prevLeft, top, bot);
-    hLine(6*COL_W+(COL_W-8)+2, prevLeft, centerY);
-    return centerY;
+  // Right QF (col 6)
+  const cRQF = RQF.map((id, i) => {
+    const tY = cR16[i*2], bY = cR16[i*2+1];
+    const topPx = (tY + bY) / 2 - MBH / 2 - HEADER_H;
+    const cY = placeMatch(id, 6, topPx);
+    connect(tY, bY, cY, colLeft(7), colRight(6), 'left');
+    return cY;
   });
 
-  // ── SF Left ──
-  const sfLtop = leftQFCenterYs[0];
-  const sfLbot = leftQFCenterYs[1];
-  const sfLmidY = (sfLtop + sfLbot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-  const sfLcenterY = placeMatch('sf_L', 3, sfLmidY);
-  hLine(2*COL_W+(COL_W-8)+2, 3*COL_W+2, sfLtop);
-  hLine(2*COL_W+(COL_W-8)+2, 3*COL_W+2, sfLbot);
-  vLine(3*COL_W+2-6, sfLtop, sfLbot);
-  hLine(3*COL_W+2-6, 3*COL_W+2, sfLcenterY);
+  // Left SF (col 3)
+  const sfLtopPx = (cLQF[0] + cLQF[1]) / 2 - MBH / 2 - HEADER_H;
+  const cSFL = placeMatch('sf_L', 3, sfLtopPx);
+  connect(cLQF[0], cLQF[1], cSFL, colRight(2), colLeft(3), 'right');
 
-  // ── SF Right ──
-  const sfRtop = rightQFCenterYs[0];
-  const sfRbot = rightQFCenterYs[1];
-  const sfRmidY = (sfRtop + sfRbot) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-  const sfRcenterY = placeMatch('sf_R', 5, sfRmidY);
-  hLine(5*COL_W+(COL_W-8)+2, 6*COL_W, sfRtop);
-  hLine(5*COL_W+(COL_W-8)+2, 6*COL_W, sfRbot);
-  vLine(6*COL_W, sfRtop, sfRbot);
-  hLine(5*COL_W+(COL_W-8)+2, 6*COL_W, sfRcenterY);
+  // Right SF (col 5)
+  const sfRtopPx = (cRQF[0] + cRQF[1]) / 2 - MBH / 2 - HEADER_H;
+  const cSFR = placeMatch('sf_R', 5, sfRtopPx);
+  connect(cRQF[0], cRQF[1], cSFR, colLeft(6), colRight(5), 'left');
 
-  // ── FINAL ──
-  const finalMidY = (sfLcenterY + sfRcenterY) / 2 - MATCH_BOX_H / 2 - HEADER_H;
-  const finalCenterY = placeMatch('final', 4, finalMidY);
+  // Final (col 4)
+  const finalTopPx = (cSFL + cSFR) / 2 - MBH / 2 - HEADER_H;
+  const cFinal = placeMatch('final', 4, finalTopPx);
+
   // Trophy above final
+  const trophySz = Math.max(Math.round(18 * scale), 11);
   const trophy = document.createElement('div');
-  trophy.style.cssText = `position:absolute; left:${4*COL_W}px; top:${HEADER_H + finalMidY - 32}px; width:${COL_W-8}px; text-align:center; font-size:20px;`;
+  trophy.style.cssText = `position:absolute; left:${colLeft(4)}px; top:${HEADER_H + finalTopPx - trophySz - 4}px; width:${COL_W-8}px; text-align:center; font-size:${trophySz}px; line-height:1;`;
   trophy.textContent = '🏆';
   inner.appendChild(trophy);
-  // Connectors from SF to Final
-  hLine(3*COL_W+(COL_W-8)+2, 4*COL_W+2, sfLcenterY);
-  hLine(4*COL_W+(COL_W-8)+2, 5*COL_W, sfRcenterY);
-  vLine(4*COL_W+2-6, sfLcenterY, finalCenterY);
-  vLine(5*COL_W, sfRcenterY, finalCenterY);
 
-  // ── 3rd place match ──
-  const thirdY = finalMidY + MATCH_BOX_H + 24;
-  placeMatch('third', 4, thirdY);
+  // SF → Final connectors
+  hLine(colRight(3), colLeft(4) - 6, cSFL);
+  hLine(colRight(4) + 6, colLeft(5), cSFR);
+  vLine(colLeft(4) - 6, cSFL, cFinal);
+  vLine(colRight(4) + 6, cSFR, cFinal);
+
+  // 3rd Place (col 4, below final)
+  const thirdGap = Math.max(MBH * 0.55, 8);
+  const thirdTopPx = finalTopPx + MBH + thirdGap;
+  placeMatch('third', 4, thirdTopPx);
+  const thirdFontSz = Math.max(Math.round(9 * scale), 7);
   const thirdLabel = document.createElement('div');
-  thirdLabel.style.cssText = `position:absolute; left:${4*COL_W}px; top:${HEADER_H + thirdY - 18}px; width:${COL_W-8}px; text-align:center; font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:1px;`;
+  thirdLabel.style.cssText = `position:absolute; left:${colLeft(4)}px; top:${HEADER_H + thirdTopPx - thirdFontSz - 3}px; width:${COL_W-8}px; text-align:center; font-size:${thirdFontSz}px; color:var(--muted); text-transform:uppercase; letter-spacing:1px;`;
   thirdLabel.textContent = '3rd Place';
   inner.appendChild(thirdLabel);
 
-  // Update total height
-  inner.style.height = `${HEADER_H + thirdY + MATCH_BOX_H + 20}px`;
+  const totalH = HEADER_H + thirdTopPx + MBH + 8;
+  inner.style.height = `${totalH}px`;
 
   container.appendChild(inner);
-  wrapper.appendChild(container);
-  el.appendChild(wrapper);
+  el.appendChild(container);
 
-  // Scroll hint
-  const hint = document.createElement('div');
-  hint.style.cssText = 'text-align:center; font-size:11px; color:var(--muted); padding:6px 0 2px; letter-spacing:0.5px;';
-  hint.textContent = '← scroll to see full bracket →';
-  el.appendChild(hint);
-
-  // Admin quick-edit modal
-  window.openMatchEditor = function(matchId) {
+  // ── Admin click-to-edit modal ──
+  window.openMatchEditor = function(matchId, pageEl) {
     const existing = document.getElementById('match-editor-modal');
     if (existing) existing.remove();
 
     const data = getData();
     const m = getMatchData(data, matchId);
-    const home = getTeam(m.home);
-    const away = getTeam(m.away);
 
     const modal = document.createElement('div');
     modal.id = 'match-editor-modal';
-    modal.style.cssText = `position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:999; display:flex; align-items:center; justify-content:center; padding:20px;`;
+    modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.78); z-index:999; display:flex; align-items:center; justify-content:center; padding:20px;';
     modal.innerHTML = `
       <div style="background:var(--card-bg); border:1px solid var(--card-border); border-radius:12px; padding:20px; width:100%; max-width:340px;">
-        <div style="font-family:var(--font-display); font-size:18px; color:var(--gold); margin-bottom:14px; letter-spacing:1px;">Edit Match</div>
+        <div style="font-family:var(--font-display); font-size:20px; color:var(--gold); margin-bottom:14px; letter-spacing:1px;">Edit Match</div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
           <div>
-            <label style="margin-bottom:4px; margin-top:0;">Home Team</label>
-            <select id="me-home" style="font-size:13px;">
+            <label style="margin-top:0; margin-bottom:4px;">Home Team</label>
+            <select id="me-home" style="font-size:13px; padding:7px 8px;">
               <option value="">— TBD —</option>
-              ${ALL_TEAMS.map(t=>`<option value="${t.id}" ${t.id===m.home?'selected':''}>${t.name}</option>`).join('')}
+              ${ALL_TEAMS.map(t => `<option value="${t.id}"${t.id===m.home?' selected':''}>${t.name}</option>`).join('')}
             </select>
           </div>
           <div>
-            <label style="margin-bottom:4px; margin-top:0;">Away Team</label>
-            <select id="me-away" style="font-size:13px;">
+            <label style="margin-top:0; margin-bottom:4px;">Away Team</label>
+            <select id="me-away" style="font-size:13px; padding:7px 8px;">
               <option value="">— TBD —</option>
-              ${ALL_TEAMS.map(t=>`<option value="${t.id}" ${t.id===m.away?'selected':''}>${t.name}</option>`).join('')}
+              ${ALL_TEAMS.map(t => `<option value="${t.id}"${t.id===m.away?' selected':''}>${t.name}</option>`).join('')}
             </select>
           </div>
         </div>
-        <div style="display:grid; grid-template-columns:1fr auto 1fr; gap:8px; align-items:center; margin-bottom:14px;">
-          <input type="number" id="me-hs" value="${m.homeScore||''}" placeholder="—" class="score-input" style="width:100%!important; text-align:center;">
-          <span class="vs-label" style="font-size:16px;">–</span>
-          <input type="number" id="me-as" value="${m.awayScore||''}" placeholder="—" class="score-input" style="width:100%!important; text-align:center;">
+        <div style="display:grid; grid-template-columns:1fr auto 1fr; gap:8px; align-items:center; margin-bottom:16px;">
+          <input type="number" id="me-hs" value="${m.homeScore||''}" placeholder="—" class="score-input" min="0" max="20" style="width:100%!important; text-align:center; font-size:20px;">
+          <span style="color:var(--muted); font-size:18px; padding:0 4px;">–</span>
+          <input type="number" id="me-as" value="${m.awayScore||''}" placeholder="—" class="score-input" min="0" max="20" style="width:100%!important; text-align:center; font-size:20px;">
         </div>
         <div style="display:flex; gap:8px;">
           <button class="btn full" id="me-save" style="margin-top:0;">Save</button>
@@ -1949,9 +1812,8 @@ function renderBracketVisual(el, data) {
       </div>`;
 
     document.body.appendChild(modal);
-
     document.getElementById('me-cancel').onclick = () => modal.remove();
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.onclick = e => { if (e.target === modal) modal.remove(); };
 
     document.getElementById('me-save').onclick = async () => {
       const d = getData();
@@ -1960,18 +1822,11 @@ function renderBracketVisual(el, data) {
       const awayVal = document.getElementById('me-away').value;
       const hs = document.getElementById('me-hs').value;
       const as = document.getElementById('me-as').value;
-      const round = matchId.split('_')[0];
-      d.knockoutMatches[matchId] = {
-        round: matchId === 'final' ? 'final' : matchId === 'third' ? 'third' : round,
-        home: homeVal,
-        away: awayVal,
-        homeScore: hs,
-        awayScore: as,
-        played: hs !== '' && as !== '',
-      };
+      const round = matchId === 'final' ? 'final' : matchId === 'third' ? 'third' : matchId.split('_')[0];
+      d.knockoutMatches[matchId] = { round, home: homeVal, away: awayVal, homeScore: hs, awayScore: as, played: hs !== '' && as !== '' };
       await saveData(d);
       modal.remove();
-      knockout(el);
+      knockout(pageEl);
     };
   };
 }
@@ -2218,6 +2073,16 @@ function adminAdvancement(el) {
   });
   el.appendChild(card);
 
+  // Auto-check "Advanced" when "Won Group" is checked
+  el.querySelectorAll('input[data-type="groupWinner"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        const advCb = el.querySelector(`input[data-id="${cb.dataset.id}"][data-type="advanced"]`);
+        if (advCb) advCb.checked = true;
+      }
+    });
+  });
+
   const saveBtn = document.createElement('button');
   saveBtn.className = 'btn full';
   saveBtn.textContent = 'Save Advancement';
@@ -2227,6 +2092,10 @@ function adminAdvancement(el) {
       const id = cb.dataset.id, type = cb.dataset.type;
       if (!data.advancement[id]) data.advancement[id] = {};
       data.advancement[id][type] = cb.checked;
+    });
+    // Ensure groupWinners are also marked as advanced
+    Object.keys(data.advancement).forEach(id => {
+      if (data.advancement[id].groupWinner) data.advancement[id].advanced = true;
     });
     await saveData(data);
     showFlash(el, 'Advancement saved!');
