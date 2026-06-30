@@ -587,10 +587,10 @@
 
 <nav id="nav">
   <button class="nav-btn active" onclick="navigate('home')">Home</button>
-  <button class="nav-btn" >Enter Picks</button> 
+  <!-- <button class="nav-btn" >Enter Picks</button>  -->
   <button class="nav-btn" onclick="navigate('leaderboard')">Leaderboard</button>
-  <button class="nav-btn" onclick="navigate('matches')">Match Results</button>
   <button class="nav-btn" onclick="navigate('knockout')">Bracket</button>
+  <button class="nav-btn" onclick="navigate('matches')">Group Stage</button>
   <button class="nav-btn" onclick="navigate('popularity')">Pick Popularity</button>
   <button class="nav-btn" onclick="navigate('rules')">Pool Rules</button>
   <button class="nav-btn" onclick="navigate('admin')">Admin</button>
@@ -850,7 +850,8 @@ let adminAuthed = false;
 function navigate(page) {
   currentPage = page;
   document.querySelectorAll('.nav-btn').forEach((b, i) => {
-    const pages = ['home','picks','leaderboard','matches','knockout','popularity','rules','admin'];
+    // const pages = ['home','picks','leaderboard','matches','knockout','popularity','rules','admin'];
+    const pages = ['home','leaderboard','knockout','matches','popularity','rules','admin'];
     b.classList.toggle('active', pages[i] === page);
   });
   render();
@@ -859,7 +860,8 @@ function navigate(page) {
 function render() {
   const el = document.getElementById('page');
   const pages = {
-    home, picks, leaderboard, matches, knockout, popularity, rules, admin
+    // home, picks, leaderboard, matches, knockout, popularity, rules, admin
+    home, leaderboard, knockout, matches, popularity, rules, admin
   };
   el.innerHTML = '';
   el.classList.toggle('page-wide', currentPage === 'knockout');
@@ -911,7 +913,7 @@ function home(el) {
         </div>
       </div>
       <div style="margin-top:10px; display:flex; gap:8px;">
-        <button class="btn full" disabled style="margin-top:0; flex:1;">Enter My Picks</button>
+        <button class="btn full" disabled style="margin-top:0; flex:1;">Teams are locked</button>
         <button class="btn secondary full" onclick="navigate('matches')" style="margin-top:0; flex:1;">Match Results</button>
       </div>
       <button class="btn secondary full" onclick="navigate('knockout')" style="margin-top:8px;">🏆 Knockout Bracket →</button>
